@@ -26,8 +26,9 @@
  */
 static off_t alignTo(off_t offset, size_t align)
 {
-    if (align > 1)
+    if (align > 1) {
         return (offset + align - 1) & ~(off_t)(align - 1);
+    }
     return offset;
 }
 
@@ -40,10 +41,12 @@ static int comparePhdr(const void* a, const void* b)
 {
     const GElf_Phdr* pa = a;
     const GElf_Phdr* pb = b;
-    if (pa->p_paddr < pb->p_paddr)
+    if (pa->p_paddr < pb->p_paddr) {
         return -1;
-    if (pa->p_paddr > pb->p_paddr)
+    }
+    if (pa->p_paddr > pb->p_paddr) {
         return 1;
+    }
     return 0;
 }
 
@@ -223,8 +226,9 @@ int main(int argCount, char** argValues)
     /* Extract only PT_LOAD segments from the input PHT */
     for (size_t i = 0; i < phdrCount; i++) {
         GElf_Phdr ph;
-        if (!gelf_getphdr(inputElf, i, &ph))
+        if (!gelf_getphdr(inputElf, i, &ph)) {
             continue;
+        }
         if (ph.p_type == PT_LOAD) {
             /* Skip segments with zero filesz unless explicitly allowed */
             if (ph.p_filesz == 0 && !allowZeroSizeSeg) {
@@ -321,13 +325,15 @@ int main(int argCount, char** argValues)
 
     /* Write each sorted PT_LOAD entry into the new PHT */
     for (size_t i = 0; i < loadCount; i++) {
-        if (!gelf_update_phdr(outputElf, i, &phdrs[i]))
+        if (!gelf_update_phdr(outputElf, i, &phdrs[i])) {
             fprintf(stderr, "gelf_update_phdr[%zu]: %s\n", i, elf_errmsg(-1));
+        }
     }
 
     /* Flush header + PHT to the output file */
-    if (elf_update(outputElf, ELF_C_WRITE) < 0)
+    if (elf_update(outputElf, ELF_C_WRITE) < 0) {
         fprintf(stderr, "elf_update header+PHT: %s\n", elf_errmsg(-1));
+    }
     DEBUG_PRINT("Wrote initial ELF header and PHT to output file.\n");
 
     /* Copy segment data in sorted order */
@@ -414,11 +420,13 @@ int main(int argCount, char** argValues)
         }
         else {
             GElf_Shdr nullShdr = {0}; /* SHT_NULL */
-            if (!gelf_update_shdr(nullScn, &nullShdr))
+            if (!gelf_update_shdr(nullScn, &nullShdr)) {
                 fprintf(stderr, "gelf_update_shdr(NULL): %s\n", elf_errmsg(-1));
+            }
             GElf_Ehdr outEhdr;
-            if (!gelf_getehdr(outputElf, &outEhdr))
+            if (!gelf_getehdr(outputElf, &outEhdr)) {
                 fprintf(stderr, "gelf_getehdr(out): %s\n", elf_errmsg(-1));
+            }
             outEhdr.e_shnum    = 1;
             outEhdr.e_shstrndx = SHN_UNDEF;
             if (!gelf_update_ehdr(outputElf, &outEhdr)) {
