@@ -21,19 +21,6 @@
     } while (0)
 
 /*
- * alignTo:
- *   Round 'offset' up to the next multiple of 'align'.
- *   Ensures each segment is placed on its required alignment boundary.
- */
-static off_t alignTo(off_t offset, size_t align)
-{
-    if (align > 1) {
-        return (offset + align - 1) & ~(off_t)(align - 1);
-    }
-    return offset;
-}
-
-/*
  * comparePhdr:
  *   qsort comparator ordering program headers by load address (p_paddr).
  *   Sorts ascending so segments land in increasing memory order.
