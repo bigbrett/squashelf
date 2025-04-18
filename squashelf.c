@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <getopt.h>
 
 /*
  * alignTo:
@@ -40,24 +41,43 @@ static int comparePhdr(const void* a, const void* b)
 int main(int argCount, char** argValues)
 {
     int         noSht = 0;
-    const char* inputFile;
-    const char* outputFile;
+    const char* inputFile = NULL;
+    const char* outputFile = NULL;
+    int         opt;
+    int         option_index = 0; /* For getopt_long */
 
-    /* Parse command-line args: optional --nosht flag */
-    if (argCount == 3) {
-        inputFile  = argValues[1];
-        outputFile = argValues[2];
+    /* Define long options */
+    static struct option long_options[] = {
+        {"nosht", no_argument, 0, 'n'}, /* --nosht is equivalent to -n */
+        {0, 0, 0, 0}
+    };
+
+    /* Use getopt_long to parse command-line options */
+    optind = 1; /* Reset optind */
+    while ((opt = getopt_long(argCount, argValues, "n", long_options, &option_index)) != -1) {
+        switch (opt) {
+        case 'n':
+            noSht = 1;
+            break;
+        case '?': /* getopt_long prints an error message */
+            fprintf(stderr, "Usage: %s [-n | --nosht] <input.elf> <output.elf>\n",
+                    argValues[0]);
+            return EXIT_FAILURE;
+        default:
+            /* Should not happen */
+            abort();
+        }
     }
-    else if (argCount == 4 && strcmp(argValues[1], "--nosht") == 0) {
-        noSht      = 1;
-        inputFile  = argValues[2];
-        outputFile = argValues[3];
-    }
-    else {
-        fprintf(stderr, "Usage: %s [--nosht] <input.elf> <output.elf>\n",
+
+    /* Check for the correct number of positional arguments */
+    if (optind + 2 != argCount) {
+         fprintf(stderr, "Usage: %s [-n | --nosht] <input.elf> <output.elf>\n",
                 argValues[0]);
         return EXIT_FAILURE;
     }
+
+    inputFile  = argValues[optind];
+    outputFile = argValues[optind + 1];
 
     /* Initialize libelf library */
     if (elf_version(EV_CURRENT) == EV_NONE) {
