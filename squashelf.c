@@ -11,6 +11,7 @@
 #include <getopt.h>
 #include <stdint.h>
 #include <stdarg.h> /* Needed for variadic macros */
+#include <stdbool.h> /* Needed for bool type */
 
 /* Macro for verbose printing */
 #define DEBUG_PRINT(fmt, ...)                    \
@@ -272,6 +273,17 @@ int main(int argCount, char** argValues)
     qsort(phdrs, loadCount, sizeof(GElf_Phdr), comparePhdr);
     DEBUG_PRINT("Sorted PT_LOAD segments by LMA.\n");
 
+    /* Allocate storage for data buffers we read */
+    void** data_buffers = calloc(loadCount, sizeof(void*));
+    if (!data_buffers) {
+        perror("calloc data_buffers");
+        free(phdrs);
+        elf_end(inputElf);
+        close(inputFd);
+        return EXIT_FAILURE;
+    }
+    bool cleanup_buffers = true; /* Flag to track if buffers need cleanup */
+
     /* Open output file for writing the filtered ELF */
     int outputFd = open(outputFile, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (outputFd < 0) {
@@ -336,121 +348,126 @@ int main(int argCount, char** argValues)
     }
     DEBUG_PRINT("Wrote initial ELF header and PHT to output file.\n");
 
-    /* Copy segment data in sorted order */
-    off_t currentOffset = lseek(outputFd, 0, SEEK_END);
-    DEBUG_PRINT("Starting segment data copy. Initial output offset: 0x%lx\n",
-                currentOffset);
+    /* Read segment data and associate with output ELF using sections/data */
+    DEBUG_PRINT("Associating segment data with output ELF...\n");
     for (size_t i = 0; i < loadCount; i++) {
-        GElf_Phdr seg           = phdrs[i];
-        off_t     alignedOffset = alignTo(currentOffset, seg.p_align);
-        seg.p_offset            = alignedOffset;
-        DEBUG_PRINT("  Copying segment %zu: src_offset=0x%lx, size=0x%lx, "
-                    "align=%lu -> dest_offset=0x%lx\n",
-                    i, phdrs[i].p_offset, seg.p_filesz, seg.p_align,
-                    alignedOffset);
-        if (!gelf_update_phdr(outputElf, i, &seg)) {
-            fprintf(stderr, "update_phdr offset[%zu]: %s\n", i, elf_errmsg(-1));
-            /* Handle error */
-        }
+        GElf_Phdr seg = phdrs[i]; /* Use the sorted phdr */
 
-        /* If filesz is zero, keep the PHT entry but skip data copy */
+        /* Skip segments with zero file size */
         if (seg.p_filesz == 0) {
-            DEBUG_PRINT("  Segment %zu has zero filesz, skipping data copy\n",
-                        i);
+            DEBUG_PRINT("  Segment %zu has zero filesz, skipping data association\n", i);
             continue;
         }
 
+        /* Allocate buffer for segment data */
         void* buffer = malloc(seg.p_filesz);
-        if (!buffer && seg.p_filesz > 0) { /* Check if malloc failed */
+        if (!buffer) {
             perror("malloc segment buffer");
-            /* Handle error: cleanup and exit */
-            elf_end(outputElf);
-            close(outputFd);
-            free(phdrs);
-            elf_end(inputElf);
-            close(inputFd);
-            return EXIT_FAILURE;
+            goto cleanup_error; /* Use goto for centralized cleanup */
         }
-        ssize_t bytes_read =
-            pread(inputFd, buffer, seg.p_filesz, phdrs[i].p_offset);
+        data_buffers[i] = buffer; /* Store buffer pointer for later free */
+
+        /* Read segment data from input file */
+        ssize_t bytes_read = pread(inputFd, buffer, seg.p_filesz, seg.p_offset);
         if (bytes_read < 0) {
             perror("pread segment data");
-            /* Handle error */
-            free(buffer);
-            continue; /* Or cleanup and exit */
+            goto cleanup_error;
         }
         else if ((size_t)bytes_read != seg.p_filesz) {
-            fprintf(
-                stderr,
-                "Warning: short read for segment %zu (expected %lu, got %zd)\n",
-                i, seg.p_filesz, bytes_read);
-            /* Decide how to handle this, maybe continue with partial data? */
+            fprintf(stderr,
+                    "Warning: short read for segment %zu (expected %lu, got %zd)\n",
+                    i, seg.p_filesz, bytes_read);
+            /* Continue with potentially partial data, but adjust size?
+               For simplicity, we'll error out on short reads for now. */
+            fprintf(stderr, "Error: Short read encountered. Aborting.\n");
+             goto cleanup_error;
+       }
+
+        /* Create a new section for this segment's data */
+        Elf_Scn* scn = elf_newscn(outputElf);
+        if (!scn) {
+            fprintf(stderr, "elf_newscn[%zu]: %s\n", i, elf_errmsg(-1));
+            goto cleanup_error;
         }
 
-        ssize_t bytes_written =
-            pwrite(outputFd, buffer, bytes_read,
-                   alignedOffset); /* Use bytes_read in case of short read */
-        free(buffer);
-        if (bytes_written < 0) {
-            perror("pwrite segment data");
-            /* Handle error */
-            continue; /* Or cleanup and exit */
-        }
-        else if (bytes_written != bytes_read) {
-            fprintf(
-                stderr,
-                "Warning: short write for segment %zu (tried %zd, wrote %zd)\n",
-                i, bytes_read, bytes_written);
-            /* Handle error: disk full? */
+        /* Create a new data descriptor for the section */
+        Elf_Data* data = elf_newdata(scn);
+        if (!data) {
+            fprintf(stderr, "elf_newdata[%zu]: %s\n", i, elf_errmsg(-1));
+            goto cleanup_error;
         }
 
-        currentOffset =
-            alignedOffset +
-            bytes_written; /* Update based on actual bytes written */
+        /* Fill the data descriptor */
+        data->d_align = seg.p_align;
+        data->d_buf   = buffer; /* libelf reads from this buffer during elf_update */
+        data->d_size  = seg.p_filesz; /* Use actual filesz */
+        data->d_type  = ELF_T_BYTE;
+        data->d_off   = 0LL; /* Offset within the section */
+
+        /* We don't need elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY) because
+           elf_newdata implicitly marks the section containing the data descriptor
+           as dirty. elf_update will write it. */
+
+        DEBUG_PRINT("  Associated data for segment %zu: size=0x%lx, align=%lu\n",
+                     i, seg.p_filesz, seg.p_align);
+
+        /* Note: We do NOT update the Phdr p_offset here. elf_update calculates
+           the final offsets for both sections and segments based on layout. */
     }
-    DEBUG_PRINT("Finished copying segment data. Final output offset: 0x%lx\n",
-                currentOffset);
+    DEBUG_PRINT("Finished associating segment data.\n");
 
-    /* Optionally add one NULL section and point header at it */
-    if (!noSht) {
-        DEBUG_PRINT("Adding NULL section header.\n");
-        Elf_Scn* nullScn = elf_newscn(outputElf);
-        if (!nullScn) {
-            fprintf(stderr, "elf_newscn(NULL): %s\n", elf_errmsg(-1));
-        }
-        else {
-            GElf_Shdr nullShdr = {0}; /* SHT_NULL */
-            if (!gelf_update_shdr(nullScn, &nullShdr)) {
-                fprintf(stderr, "gelf_update_shdr(NULL): %s\n", elf_errmsg(-1));
-            }
-            GElf_Ehdr outEhdr;
-            if (!gelf_getehdr(outputElf, &outEhdr)) {
-                fprintf(stderr, "gelf_getehdr(out): %s\n", elf_errmsg(-1));
-            }
-            outEhdr.e_shnum    = 1;
-            outEhdr.e_shstrndx = SHN_UNDEF;
-            if (!gelf_update_ehdr(outputElf, &outEhdr)) {
-                fprintf(stderr, "gelf_update_ehdr(sections): %s\n",
-                        elf_errmsg(-1));
-            }
-            DEBUG_PRINT("Updated ELF header to point to NULL SHT.\n");
-        }
-    }
+    /* Update ELF header section info based on noSht flag *before* final update */
+    if (!gelf_getehdr(outputElf, &elfHeader)) { /* Get potentially updated header */
+         fprintf(stderr, "gelf_getehdr(out pre-final): %s\n", elf_errmsg(-1));
+         goto cleanup_error;
+     }
 
-    /* Finalize all updates (offsets, sizes) */
-    DEBUG_PRINT("Finalizing output ELF file...\n");
-    if (elf_update(outputElf, ELF_C_WRITE) < 0) {
+    if (noSht) {
+        DEBUG_PRINT("Configuring output ELF for no SHT.\n");
+        elfHeader.e_shnum    = 0;
+        elfHeader.e_shoff    = 0; /* elf_update will calculate final value if needed */
+        elfHeader.e_shstrndx = SHN_UNDEF;
+        if (!gelf_update_ehdr(outputElf, &elfHeader)) {
+            fprintf(stderr, "gelf_update_ehdr (noSht): %s\n", elf_errmsg(-1));
+             goto cleanup_error;
+         }
+    } else {
+         DEBUG_PRINT("Adding NULL section header as final section.\n");
+         Elf_Scn* nullScn = elf_newscn(outputElf); /* Add NULL section */
+         if (!nullScn) {
+             fprintf(stderr, "elf_newscn(NULL): %s\n", elf_errmsg(-1));
+             goto cleanup_error;
+         }
+         /* GElf_Shdr is automatically SHT_NULL initialized by elf_newscn */
+         /* elf_update will set the correct e_shnum and e_shstrndx (usually 0 for NULL string table) */
+         DEBUG_PRINT("NULL section added; elf_update will finalize SHT info.\n");
+     }
+
+    /* Finalize all updates (offsets, sizes, data writing) */
+    DEBUG_PRINT("Finalizing output ELF file (layout and data write)...\n");
+    off_t final_size = elf_update(outputElf, ELF_C_WRITE);
+    if (final_size < 0) {
         fprintf(stderr, "elf_update final: %s\n", elf_errmsg(-1));
+        goto cleanup_error;
     }
-    DEBUG_PRINT("Output ELF file finalized.\n");
+    DEBUG_PRINT("Output ELF file finalized. Final size: %ld bytes\n", final_size);
+
+cleanup_error:; /* Label for centralized cleanup */
+    int exit_status = (errno != 0 || elf_errno() != 0) ? EXIT_FAILURE : EXIT_SUCCESS;
 
     /* Clean up handles and memory */
     DEBUG_PRINT("Cleaning up resources.\n");
     elf_end(outputElf);
     close(outputFd);
+    if (cleanup_buffers && data_buffers) {
+         for (size_t i = 0; i < loadCount; i++) {
+             free(data_buffers[i]); /* Free stored buffer pointers */
+         }
+         free(data_buffers);
+     }
     free(phdrs);
     elf_end(inputElf);
     close(inputFd);
 
-    return EXIT_SUCCESS;
+    return exit_status;
 }
