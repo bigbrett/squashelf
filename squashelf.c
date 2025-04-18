@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <getopt.h>
+#include <stdint.h>
 
 /*
  * alignTo:
@@ -41,6 +42,9 @@ static int comparePhdr(const void* a, const void* b)
 int main(int argCount, char** argValues)
 {
     int         noSht = 0;
+    int         hasRange = 0;
+    uint64_t    minLma = 0;
+    uint64_t    maxLma = 0;
     const char* inputFile = NULL;
     const char* outputFile = NULL;
     int         opt;
@@ -48,19 +52,57 @@ int main(int argCount, char** argValues)
 
     /* Define long options */
     static struct option long_options[] = {
-        {"nosht", no_argument, 0, 'n'}, /* --nosht is equivalent to -n */
+        {"nosht", no_argument, 0, 'n'},       /* --nosht is equivalent to -n */
+        {"range", required_argument, 0, 'r'}, /* --range is equivalent to -r */
         {0, 0, 0, 0}
     };
 
     /* Use getopt_long to parse command-line options */
     optind = 1; /* Reset optind */
-    while ((opt = getopt_long(argCount, argValues, "n", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argCount, argValues, "nr:", long_options, &option_index)) != -1) {
         switch (opt) {
         case 'n':
             noSht = 1;
             break;
+        case 'r':
+            {
+                /* Parse the range string (e.g., "0xA00000000-0xB0000000") */
+                hasRange = 1;
+                char* dashPos = strchr(optarg, '-');
+                if (!dashPos) {
+                    fprintf(stderr, "Invalid range format. Expected: min-max\n");
+                    return EXIT_FAILURE;
+                }
+                
+                /* Split the string */
+                *dashPos = '\0';
+                char* minStr = optarg;
+                char* maxStr = dashPos + 1;
+                
+                /* Check for hex or decimal format and convert */
+                if (strncmp(minStr, "0x", 2) == 0 || strncmp(minStr, "0X", 2) == 0) {
+                    minLma = strtoull(minStr, NULL, 16);
+                } else {
+                    minLma = strtoull(minStr, NULL, 10);
+                }
+                
+                if (strncmp(maxStr, "0x", 2) == 0 || strncmp(maxStr, "0X", 2) == 0) {
+                    maxLma = strtoull(maxStr, NULL, 16);
+                } else {
+                    maxLma = strtoull(maxStr, NULL, 10);
+                }
+                
+                /* Restore the dash for error messages */
+                *(dashPos) = '-';
+                
+                if (minLma >= maxLma) {
+                    fprintf(stderr, "Invalid range: min must be less than max\n");
+                    return EXIT_FAILURE;
+                }
+            }
+            break;
         case '?': /* getopt_long prints an error message */
-            fprintf(stderr, "Usage: %s [-n | --nosht] <input.elf> <output.elf>\n",
+            fprintf(stderr, "Usage: %s [-n | --nosht] [-r | --range min-max] <input.elf> <output.elf>\n",
                     argValues[0]);
             return EXIT_FAILURE;
         default:
@@ -71,7 +113,7 @@ int main(int argCount, char** argValues)
 
     /* Check for the correct number of positional arguments */
     if (optind + 2 != argCount) {
-         fprintf(stderr, "Usage: %s [-n | --nosht] <input.elf> <output.elf>\n",
+         fprintf(stderr, "Usage: %s [-n | --nosht] [-r | --range min-max] <input.elf> <output.elf>\n",
                 argValues[0]);
         return EXIT_FAILURE;
     }
@@ -137,6 +179,14 @@ int main(int argCount, char** argValues)
         if (!gelf_getphdr(inputElf, i, &ph))
             continue;
         if (ph.p_type == PT_LOAD) {
+            /* Apply range filter if specified */
+            if (hasRange) {
+                uint64_t segmentEnd = ph.p_paddr + ph.p_memsz - 1;
+                /* Skip segments outside the specified range */
+                if (ph.p_paddr > maxLma || segmentEnd < minLma) {
+                    continue;
+                }
+            }
             phdrs[loadCount++] = ph;
         }
     }
