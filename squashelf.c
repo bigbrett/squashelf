@@ -182,8 +182,8 @@ int main(int argCount, char** argValues)
             /* Apply range filter if specified */
             if (hasRange) {
                 uint64_t segmentEnd = ph.p_paddr + ph.p_memsz - 1;
-                /* Skip segments outside the specified range */
-                if (ph.p_paddr > maxLma || segmentEnd < minLma) {
+                /* Skip segments that aren't fully contained within the range */
+                if (ph.p_paddr < minLma || segmentEnd > maxLma) {
                     continue;
                 }
             }
