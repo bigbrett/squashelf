@@ -13,8 +13,11 @@
 #include <stdarg.h> /* Needed for variadic macros */
 
 /* Macro for verbose printing */
-#define DEBUG_PRINT(fmt, ...) \
-    do { if (verbose) fprintf(stderr, fmt, ##__VA_ARGS__); } while (0)
+#define DEBUG_PRINT(fmt, ...)                    \
+    do {                                         \
+        if (verbose)                             \
+            fprintf(stderr, fmt, ##__VA_ARGS__); \
+    } while (0)
 
 /*
  * alignTo:
@@ -46,13 +49,13 @@ static int comparePhdr(const void* a, const void* b)
 
 int main(int argCount, char** argValues)
 {
-    int         noSht = 0;
-    int         hasRange = 0;
-    uint64_t    minLma = 0;
-    uint64_t    maxLma = 0;
-    const char* inputFile = NULL;
+    int         noSht      = 0;
+    int         hasRange   = 0;
+    uint64_t    minLma     = 0;
+    uint64_t    maxLma     = 0;
+    const char* inputFile  = NULL;
     const char* outputFile = NULL;
-    int         verbose = 0;
+    int         verbose    = 0;
     int         opt;
     int         option_index = 0; /* For getopt_long */
 
@@ -60,70 +63,78 @@ int main(int argCount, char** argValues)
     static struct option long_options[] = {
         {"nosht", no_argument, 0, 'n'},       /* --nosht is equivalent to -n */
         {"range", required_argument, 0, 'r'}, /* --range is equivalent to -r */
-        {"verbose", no_argument, 0, 'v'},     /* --verbose is equivalent to -v */
-        {0, 0, 0, 0}
-    };
+        {"verbose", no_argument, 0, 'v'}, /* --verbose is equivalent to -v */
+        {0, 0, 0, 0}};
 
     /* Use getopt_long to parse command-line options */
     optind = 1; /* Reset optind */
-    while ((opt = getopt_long(argCount, argValues, "nr:v", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argCount, argValues, "nr:v", long_options,
+                              &option_index)) != -1) {
         switch (opt) {
-        case 'n':
-            noSht = 1;
-            break;
-        case 'r':
-            {
+            case 'n':
+                noSht = 1;
+                break;
+            case 'r': {
                 /* Parse the range string (e.g., "0xA00000000-0xB0000000") */
-                hasRange = 1;
+                hasRange      = 1;
                 char* dashPos = strchr(optarg, '-');
                 if (!dashPos) {
-                    fprintf(stderr, "Invalid range format. Expected: min-max\n");
+                    fprintf(stderr,
+                            "Invalid range format. Expected: min-max\n");
                     return EXIT_FAILURE;
                 }
-                
+
                 /* Split the string */
-                *dashPos = '\0';
+                *dashPos     = '\0';
                 char* minStr = optarg;
                 char* maxStr = dashPos + 1;
-                
+
                 /* Check for hex or decimal format and convert */
-                if (strncmp(minStr, "0x", 2) == 0 || strncmp(minStr, "0X", 2) == 0) {
+                if (strncmp(minStr, "0x", 2) == 0 ||
+                    strncmp(minStr, "0X", 2) == 0) {
                     minLma = strtoull(minStr, NULL, 16);
-                } else {
+                }
+                else {
                     minLma = strtoull(minStr, NULL, 10);
                 }
-                
-                if (strncmp(maxStr, "0x", 2) == 0 || strncmp(maxStr, "0X", 2) == 0) {
+
+                if (strncmp(maxStr, "0x", 2) == 0 ||
+                    strncmp(maxStr, "0X", 2) == 0) {
                     maxLma = strtoull(maxStr, NULL, 16);
-                } else {
+                }
+                else {
                     maxLma = strtoull(maxStr, NULL, 10);
                 }
-                
+
                 /* Restore the dash for error messages */
                 *(dashPos) = '-';
-                
+
                 if (minLma >= maxLma) {
-                    fprintf(stderr, "Invalid range: min must be less than max\n");
+                    fprintf(stderr,
+                            "Invalid range: min must be less than max\n");
                     return EXIT_FAILURE;
                 }
-            }
-            break;
-        case 'v':
-            verbose = 1;
-            break;
-        case '?': /* getopt_long prints an error message */
-            fprintf(stderr, "Usage: %s [-n | --nosht] [-r | --range min-max] [-v | --verbose] <input.elf> <output.elf>\n",
-                    argValues[0]);
-            return EXIT_FAILURE;
-        default:
-            /* Should not happen */
-            abort();
+            } break;
+            case 'v':
+                verbose = 1;
+                break;
+            case '?': /* getopt_long prints an error message */
+                fprintf(stderr,
+                        "Usage: %s [-n | --nosht] [-r | --range min-max] [-v | "
+                        "--verbose] <input.elf> <output.elf>\n",
+                        argValues[0]);
+                return EXIT_FAILURE;
+            default:
+                /* Should not happen */
+                abort();
         }
     }
 
     /* Check for the correct number of positional arguments */
     if (optind + 2 != argCount) {
-         fprintf(stderr, "Usage: %s [-n | --nosht] [-r | --range min-max] [-v | --verbose] <input.elf> <output.elf>\n",
+        fprintf(stderr,
+                "Usage: %s [-n | --nosht] [-r | --range min-max] [-v | "
+                "--verbose] <input.elf> <output.elf>\n",
                 argValues[0]);
         return EXIT_FAILURE;
     }
@@ -172,7 +183,8 @@ int main(int argCount, char** argValues)
         close(inputFd);
         return EXIT_FAILURE;
     }
-    DEBUG_PRINT("Detected ELF class: %s\n", elfClass == ELFCLASS32 ? "ELF32" : "ELF64");
+    DEBUG_PRINT("Detected ELF class: %s\n",
+                elfClass == ELFCLASS32 ? "ELF32" : "ELF64");
 
     /* Read the ELF header into a generic GElf_Ehdr */
     GElf_Ehdr elfHeader;
@@ -182,7 +194,8 @@ int main(int argCount, char** argValues)
         close(inputFd);
         return EXIT_FAILURE;
     }
-    DEBUG_PRINT("Read input ELF header. Program header count: %u\n", elfHeader.e_phnum);
+    DEBUG_PRINT("Read input ELF header. Program header count: %u\n",
+                elfHeader.e_phnum);
 
     /* Count how many program headers exist in the file */
     size_t phdrCount;
@@ -209,15 +222,19 @@ int main(int argCount, char** argValues)
                 uint64_t segmentEnd = ph.p_paddr + ph.p_memsz - 1;
                 /* Skip segments that aren't fully contained within the range */
                 if (ph.p_paddr < minLma || segmentEnd > maxLma) {
-                    DEBUG_PRINT("  Skipping segment %zu (LMA 0x%lx - 0x%lx) - outside range 0x%lx - 0x%lx\n",
-                            i, ph.p_paddr, segmentEnd, minLma, maxLma);
+                    DEBUG_PRINT("  Skipping segment %zu (LMA 0x%lx - 0x%lx) - "
+                                "outside range 0x%lx - 0x%lx\n",
+                                i, ph.p_paddr, segmentEnd, minLma, maxLma);
                     continue;
                 }
             }
-            DEBUG_PRINT("  Keeping segment %zu (LMA 0x%lx, size 0x%lx/0x%lx, offset 0x%lx, align %lu)\n",
-                    i, ph.p_paddr, ph.p_filesz, ph.p_memsz, ph.p_offset, ph.p_align);
+            DEBUG_PRINT("  Keeping segment %zu (LMA 0x%lx, size 0x%lx/0x%lx, "
+                        "offset 0x%lx, align %lu)\n",
+                        i, ph.p_paddr, ph.p_filesz, ph.p_memsz, ph.p_offset,
+                        ph.p_align);
             phdrs[loadCount++] = ph;
-        } else {
+        }
+        else {
             DEBUG_PRINT("  Skipping segment %zu (type %u)\n", i, ph.p_type);
         }
     }
@@ -262,7 +279,8 @@ int main(int argCount, char** argValues)
         fprintf(stderr, "gelf_newehdr: %s\n", elf_errmsg(-1));
         /* Consider if continuing makes sense, maybe just log if verbose */
     }
-    DEBUG_PRINT("Created new ELF header for output file (class %s).\n", elfClass == ELFCLASS32 ? "ELF32" : "ELF64");
+    DEBUG_PRINT("Created new ELF header for output file (class %s).\n",
+                elfClass == ELFCLASS32 ? "ELF32" : "ELF64");
 
     /* Update program header count and clear section info */
     elfHeader.e_phnum    = loadCount;
@@ -272,14 +290,17 @@ int main(int argCount, char** argValues)
     if (!gelf_update_ehdr(outputElf, &elfHeader)) {
         fprintf(stderr, "gelf_update_ehdr: %s\n", elf_errmsg(-1));
     }
-    DEBUG_PRINT("Updated output ELF header: phnum=%zu, shoff=0, shnum=0, shstrndx=SHN_UNDEF\n", loadCount);
+    DEBUG_PRINT("Updated output ELF header: phnum=%zu, shoff=0, shnum=0, "
+                "shstrndx=SHN_UNDEF\n",
+                loadCount);
 
     /* Reserve space for the new program header table */
     if (!gelf_newphdr(outputElf, loadCount)) {
         fprintf(stderr, "gelf_newphdr: %s\n", elf_errmsg(-1));
         /* Handle error */
     }
-    DEBUG_PRINT("Reserved space for %zu program headers in output PHT.\n", loadCount);
+    DEBUG_PRINT("Reserved space for %zu program headers in output PHT.\n",
+                loadCount);
 
     /* Write each sorted PT_LOAD entry into the new PHT */
     for (size_t i = 0; i < loadCount; i++) {
@@ -294,53 +315,70 @@ int main(int argCount, char** argValues)
 
     /* Copy segment data in sorted order */
     off_t currentOffset = lseek(outputFd, 0, SEEK_END);
-    DEBUG_PRINT("Starting segment data copy. Initial output offset: 0x%lx\n", currentOffset);
+    DEBUG_PRINT("Starting segment data copy. Initial output offset: 0x%lx\n",
+                currentOffset);
     for (size_t i = 0; i < loadCount; i++) {
         GElf_Phdr seg           = phdrs[i];
         off_t     alignedOffset = alignTo(currentOffset, seg.p_align);
         seg.p_offset            = alignedOffset;
-        DEBUG_PRINT("  Copying segment %zu: src_offset=0x%lx, size=0x%lx, align=%lu -> dest_offset=0x%lx\n",
-                i, phdrs[i].p_offset, seg.p_filesz, seg.p_align, alignedOffset);
+        DEBUG_PRINT("  Copying segment %zu: src_offset=0x%lx, size=0x%lx, "
+                    "align=%lu -> dest_offset=0x%lx\n",
+                    i, phdrs[i].p_offset, seg.p_filesz, seg.p_align,
+                    alignedOffset);
         if (!gelf_update_phdr(outputElf, i, &seg)) {
             fprintf(stderr, "update_phdr offset[%zu]: %s\n", i, elf_errmsg(-1));
             /* Handle error */
         }
         void* buffer = malloc(seg.p_filesz);
         if (!buffer && seg.p_filesz > 0) { /* Check if malloc failed */
-             perror("malloc segment buffer");
-             /* Handle error: cleanup and exit */
-             elf_end(outputElf);
-             close(outputFd);
-             free(phdrs);
-             elf_end(inputElf);
-             close(inputFd);
-             return EXIT_FAILURE;
+            perror("malloc segment buffer");
+            /* Handle error: cleanup and exit */
+            elf_end(outputElf);
+            close(outputFd);
+            free(phdrs);
+            elf_end(inputElf);
+            close(inputFd);
+            return EXIT_FAILURE;
         }
-        ssize_t bytes_read = pread(inputFd, buffer, seg.p_filesz, phdrs[i].p_offset);
+        ssize_t bytes_read =
+            pread(inputFd, buffer, seg.p_filesz, phdrs[i].p_offset);
         if (bytes_read < 0) {
             perror("pread segment data");
             /* Handle error */
             free(buffer);
             continue; /* Or cleanup and exit */
-        } else if ((size_t)bytes_read != seg.p_filesz) {
-            fprintf(stderr, "Warning: short read for segment %zu (expected %lu, got %zd)\n", i, seg.p_filesz, bytes_read);
+        }
+        else if ((size_t)bytes_read != seg.p_filesz) {
+            fprintf(
+                stderr,
+                "Warning: short read for segment %zu (expected %lu, got %zd)\n",
+                i, seg.p_filesz, bytes_read);
             /* Decide how to handle this, maybe continue with partial data? */
         }
 
-        ssize_t bytes_written = pwrite(outputFd, buffer, bytes_read, alignedOffset); /* Use bytes_read in case of short read */
+        ssize_t bytes_written =
+            pwrite(outputFd, buffer, bytes_read,
+                   alignedOffset); /* Use bytes_read in case of short read */
         free(buffer);
         if (bytes_written < 0) {
             perror("pwrite segment data");
             /* Handle error */
             continue; /* Or cleanup and exit */
-        } else if (bytes_written != bytes_read) {
-            fprintf(stderr, "Warning: short write for segment %zu (tried %zd, wrote %zd)\n", i, bytes_read, bytes_written);
-             /* Handle error: disk full? */
+        }
+        else if (bytes_written != bytes_read) {
+            fprintf(
+                stderr,
+                "Warning: short write for segment %zu (tried %zd, wrote %zd)\n",
+                i, bytes_read, bytes_written);
+            /* Handle error: disk full? */
         }
 
-        currentOffset = alignedOffset + bytes_written; /* Update based on actual bytes written */
+        currentOffset =
+            alignedOffset +
+            bytes_written; /* Update based on actual bytes written */
     }
-    DEBUG_PRINT("Finished copying segment data. Final output offset: 0x%lx\n", currentOffset);
+    DEBUG_PRINT("Finished copying segment data. Final output offset: 0x%lx\n",
+                currentOffset);
 
     /* Optionally add one NULL section and point header at it */
     if (!noSht) {
@@ -359,7 +397,8 @@ int main(int argCount, char** argValues)
             outEhdr.e_shnum    = 1;
             outEhdr.e_shstrndx = SHN_UNDEF;
             if (!gelf_update_ehdr(outputElf, &outEhdr)) {
-                fprintf(stderr, "gelf_update_ehdr(sections): %s\n", elf_errmsg(-1));
+                fprintf(stderr, "gelf_update_ehdr(sections): %s\n",
+                        elf_errmsg(-1));
             }
             DEBUG_PRINT("Updated ELF header to point to NULL SHT.\n");
         }
