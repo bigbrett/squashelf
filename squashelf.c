@@ -49,13 +49,14 @@ static int comparePhdr(const void* a, const void* b)
 
 int main(int argCount, char** argValues)
 {
-    int         noSht      = 0;
-    int         hasRange   = 0;
-    uint64_t    minLma     = 0;
-    uint64_t    maxLma     = 0;
-    const char* inputFile  = NULL;
-    const char* outputFile = NULL;
-    int         verbose    = 0;
+    int         noSht            = 0;
+    int         hasRange         = 0;
+    int         allowZeroSizeSeg = 0; /* New flag for zero-size segments */
+    uint64_t    minLma           = 0;
+    uint64_t    maxLma           = 0;
+    const char* inputFile        = NULL;
+    const char* outputFile       = NULL;
+    int         verbose          = 0;
     int         opt;
     int         option_index = 0; /* For getopt_long */
 
@@ -64,11 +65,12 @@ int main(int argCount, char** argValues)
         {"nosht", no_argument, 0, 'n'},       /* --nosht is equivalent to -n */
         {"range", required_argument, 0, 'r'}, /* --range is equivalent to -r */
         {"verbose", no_argument, 0, 'v'}, /* --verbose is equivalent to -v */
+        {"zero-size-segments", no_argument, 0, 'z'}, /* --zero-size-segments */
         {0, 0, 0, 0}};
 
     /* Use getopt_long to parse command-line options */
     optind = 1; /* Reset optind */
-    while ((opt = getopt_long(argCount, argValues, "nr:v", long_options,
+    while ((opt = getopt_long(argCount, argValues, "nr:vz", long_options,
                               &option_index)) != -1) {
         switch (opt) {
             case 'n':
@@ -118,10 +120,14 @@ int main(int argCount, char** argValues)
             case 'v':
                 verbose = 1;
                 break;
+            case 'z':
+                allowZeroSizeSeg = 1;
+                break;
             case '?': /* getopt_long prints an error message */
                 fprintf(stderr,
-                        "Usage: %s [-n | --nosht] [-r | --range min-max] [-v | "
-                        "--verbose] <input.elf> <output.elf>\n",
+                        "Usage: %s [-n | --nosht] [-r | --range min-max] "
+                        "[-v | --verbose] [-z | --zero-size-segments] "
+                        "<input.elf> <output.elf>\n",
                         argValues[0]);
                 return EXIT_FAILURE;
             default:
@@ -133,8 +139,9 @@ int main(int argCount, char** argValues)
     /* Check for the correct number of positional arguments */
     if (optind + 2 != argCount) {
         fprintf(stderr,
-                "Usage: %s [-n | --nosht] [-r | --range min-max] [-v | "
-                "--verbose] <input.elf> <output.elf>\n",
+                "Usage: %s [-n | --nosht] [-r | --range min-max] "
+                "[-v | --verbose] [-z | --zero-size-segments] "
+                "<input.elf> <output.elf>\n",
                 argValues[0]);
         return EXIT_FAILURE;
     }
@@ -147,6 +154,8 @@ int main(int argCount, char** argValues)
     DEBUG_PRINT("Input file: %s\n", inputFile);
     DEBUG_PRINT("Output file: %s\n", outputFile);
     DEBUG_PRINT("No SHT: %s\n", noSht ? "yes" : "no");
+    DEBUG_PRINT("Allow zero-size segments: %s\n",
+                allowZeroSizeSeg ? "yes" : "no");
     if (hasRange) {
         DEBUG_PRINT("Range filter: 0x%lx - 0x%lx\n", minLma, maxLma);
     }
@@ -217,6 +226,14 @@ int main(int argCount, char** argValues)
         if (!gelf_getphdr(inputElf, i, &ph))
             continue;
         if (ph.p_type == PT_LOAD) {
+            /* Skip segments with zero filesz unless explicitly allowed */
+            if (ph.p_filesz == 0 && !allowZeroSizeSeg) {
+                DEBUG_PRINT("  Skipping segment %zu (LMA 0x%lx) - "
+                            "zero filesz\n",
+                            i, ph.p_paddr);
+                continue;
+            }
+
             /* Apply range filter if specified */
             if (hasRange) {
                 uint64_t segmentEnd = ph.p_paddr + ph.p_memsz - 1;
@@ -329,6 +346,14 @@ int main(int argCount, char** argValues)
             fprintf(stderr, "update_phdr offset[%zu]: %s\n", i, elf_errmsg(-1));
             /* Handle error */
         }
+
+        /* If filesz is zero, keep the PHT entry but skip data copy */
+        if (seg.p_filesz == 0) {
+            DEBUG_PRINT("  Segment %zu has zero filesz, skipping data copy\n",
+                        i);
+            continue;
+        }
+
         void* buffer = malloc(seg.p_filesz);
         if (!buffer && seg.p_filesz > 0) { /* Check if malloc failed */
             perror("malloc segment buffer");
